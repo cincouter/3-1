@@ -1,0 +1,97 @@
+# Лабораторная работа 3.1 по BDSAD
+# Разведочный анализ данных с использованием PySpark
+
+# Установка и настройка Spark в Google Colab
+!apt-get install openjdk-8-jdk-headless -qq > /dev/null
+!wget -q https://downloads.apache.org/spark/spark-3.1.2/spark-3.1.2-bin-hadoop2.7.tgz
+!tar xf spark-3.1.2-bin-hadoop2.7.tgz
+!pip install -q findspark
+
+import os
+import findspark
+
+os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-8-openjdk-amd64"
+os.environ["SPARK_HOME"] = "/content/spark-3.1.2-bin-hadoop2.7"
+
+findspark.init()
+
+# Создание сессии Spark
+from pyspark.sql import SparkSession
+spark = SparkSession.builder \
+    .appName("EDA with PySpark") \
+    .getOrCreate()
+
+# Загрузка данных
+file_path = "/content/endomondoHR.json"  # Убедись, что файл загружен в эту директорию
+
+df = spark.read.json(file_path)
+
+# Первичный просмотр данных
+df.show(5)
+
+# Анализ структуры данных
+print("\nСтруктура DataFrame:")
+df.printSchema()
+
+# Подсчет пропущенных значений
+from pyspark.sql.functions import col, sum
+
+print("\nКоличество пропусков в каждом столбце:")
+df.select([(sum(col(c).isNull().cast("int")).alias(c)) for c in df.columns]).show()
+
+# Описательная статистика по признаку 'heart_rate'
+print("\nОписательная статистика по heart_rate:")
+df.select("heart_rate").describe().show()
+
+# Построение гистограммы пульса
+import matplotlib.pyplot as plt
+
+heart_rate = df.select('heart_rate').dropna().rdd.flatMap(lambda x: x).collect()
+
+plt.hist(heart_rate, bins=50)
+plt.xlabel('Heart Rate')
+plt.ylabel('Frequency')
+plt.title('Distribution of Heart Rate')
+plt.show()
+
+# Вычисление корреляции между heart_rate и speed
+correlation = df.corr("heart_rate", "speed")
+print(f"\nКоэффициент корреляции между heart_rate и speed: {correlation}")
+
+# Реализация UDF-функций для категоризации heart_rate и speed
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+
+def classify_heart_rate(hr):
+    if hr is None:
+        return "Unknown"
+    elif hr < 60:
+        return "Low"
+    elif hr < 100:
+        return "Normal"
+    else:
+        return "High"
+
+def classify_speed(spd):
+    if spd is None:
+        return "Unknown"
+    elif spd < 2:
+        return "Slow"
+    elif spd < 5:
+        return "Normal"
+    else:
+        return "Fast"
+
+# Регистрация UDF
+classify_heart_rate_udf = udf(classify_heart_rate, StringType())
+classify_speed_udf = udf(classify_speed, StringType())
+
+# Применение UDF
+
+df = df.withColumn("heart_rate_category", classify_heart_rate_udf(col("heart_rate")))
+df = df.withColumn("speed_category", classify_speed_udf(col("speed")))
+
+# Просмотр результата применения UDF
+print("\nПример классифицированных данных:")
+df.select("heart_rate", "heart_rate_category", "speed", "speed_category").show(10)
+
